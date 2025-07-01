@@ -1,0 +1,372 @@
+{
+  "name": "ICT-Inspired Options Signals (Full)",
+  "nodes": [
+    {
+      "id": "1",
+      "name": "Cron Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [
+        200,
+        200
+      ],
+      "parameters": {
+        "triggerTimes": [
+          {
+            "mode": "everyDay",
+            "hour": 7,
+            "minute": 30
+          }
+        ],
+        "timeZone": "America/Los_Angeles"
+      }
+    },
+    {
+      "id": "2",
+      "name": "Set Symbols",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [
+        400,
+        200
+      ],
+      "parameters": {
+        "values": {
+          "json": [
+            {
+              "name": "symbols",
+              "value": [
+                "AAPL",
+                "TSLA",
+                "SPY",
+                "NFLX",
+                "QQQ",
+                "META"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "3",
+      "name": "Split Symbols",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 1,
+      "position": [
+        600,
+        200
+      ],
+      "parameters": {
+        "fieldToSplit": "symbols",
+        "batchSize": 1
+      }
+    },
+    {
+      "id": "4",
+      "name": "Get Prices",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        800,
+        100
+      ],
+      "parameters": {
+        "url": "https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol={{ $json[\"symbols\"] }}&apikey=YOUR_ALPHA_VANTAGE_API_KEY",
+        "responseFormat": "json"
+      }
+    },
+    {
+      "id": "5",
+      "name": "Get SMA",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        800,
+        200
+      ],
+      "parameters": {
+        "url": "https://www.alphavantage.co/query?function=SMA&symbol={{ $json[\"symbols\"] }}&interval=daily&time_period=20&series_type=close&apikey=YOUR_ALPHA_VANTAGE_API_KEY",
+        "responseFormat": "json"
+      }
+    },
+    {
+      "id": "6",
+      "name": "Get RSI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        800,
+        300
+      ],
+      "parameters": {
+        "url": "https://www.alphavantage.co/query?function=RSI&symbol={{ $json[\"symbols\"] }}&interval=daily&time_period=14&series_type=close&apikey=YOUR_ALPHA_VANTAGE_API_KEY",
+        "responseFormat": "json"
+      }
+    },
+    {
+      "id": "7",
+      "name": "Get News",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        800,
+        400
+      ],
+      "parameters": {
+        "url": "https://newsapi.org/v2/everything?q={{ $json[\"symbols\"] }}&sortBy=publishedAt&language=en&apiKey=YOUR_NEWSAPI_API_KEY",
+        "responseFormat": "json"
+      }
+    },
+    {
+      "id": "8",
+      "name": "Sentiment Analysis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        1000,
+        400
+      ],
+      "parameters": {
+        "url": "https://api-inference.huggingface.co/models/distilbert-base-uncased-finetuned-sst-2-english",
+        "method": "POST",
+        "responseFormat": "json",
+        "headers": {
+          "Authorization": "Bearer YOUR_HUGGINGFACE_API_KEY",
+          "Content-Type": "application/json"
+        },
+        "bodyParameters": [
+          {
+            "name": "inputs",
+            "value": "{{$json[\"articles\"].map(item => item.title).join(' ')}}"
+          }
+        ]
+      }
+    },
+    {
+      "id": "9",
+      "name": "Analyze ICT Logic",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1200,
+        250
+      ],
+      "parameters": {
+        "functionCode": "const symbol = $json['symbols'];\nconst priceData = $items('Get Prices')[0].json['Time Series (Daily)'];\nconst dates = Object.keys(priceData);\nconst today = priceData[dates[0]];\nconst prevDayHigh = parseFloat(today['2. high']);\nconst prevDayLow = parseFloat(today['3. low']);\nconst currentPrice = parseFloat(today['4. close']);\nconst smaData = $items('Get SMA')[0].json['Technical Analysis: SMA'];\nconst sma20 = parseFloat(smaData[Object.keys(smaData)[0]]['SMA']);\nconst rsiData = $items('Get RSI')[0].json['Technical Analysis: RSI'];\nconst rsi = parseFloat(rsiData[Object.keys(rsiData)[0]]['RSI']);\nconst senti = $items('Sentiment Analysis')[0].json[0];\nlet sentimentScore = senti.label === 'POSITIVE' ? senti.score : -senti.score;\nconst sweptHigh = currentPrice > prevDayHigh;\nconst sweptLow = currentPrice < prevDayLow;\nconst uptrend = currentPrice > sma20 && rsi < 70;\nconst downtrend = currentPrice < sma20 && rsi > 30;\nconst bullOK = sentimentScore > 0.2;\nconst bearOK = sentimentScore < -0.2;\nlet signal = 'No signal'; let confidence = 0; let edge = false;\nif (sweptLow && uptrend && bullOK) { signal = 'Call'; edge = true; } \nelse if (sweptHigh && downtrend && bearOK) { signal = 'Put'; edge = true; }\nif (edge) confidence = 0.5 + Math.min(Math.abs(sentimentScore), 0.5);\nreturn [{ timestamp: new Date().toISOString(), symbol, currentPrice, prevDayHigh, prevDayLow, sma20, rsi, sentimentScore, signal, confidence }];"
+      }
+    },
+    {
+      "id": "10",
+      "name": "Send Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [
+        1400,
+        150
+      ],
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "\ud83d\udcc8 *Signal for {{ $json.symbols }}*\nPrice: {{ $json.currentPrice }}\nPrev High: {{ $json.prevDayHigh }}\nPrev Low: {{ $json.prevDayLow }}\nSMA20: {{ $json.sma20 }}\nRSI: {{ $json.rsi }}\nSentiment: {{ $json.sentimentScore }}\n*Signal*: {{ $json.signal }} (Confidence: {{ $json.confidence }})",
+        "options": {
+          "parse_mode": "Markdown"
+        }
+      }
+    },
+    {
+      "id": "11",
+      "name": "Send Discord",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        1400,
+        250
+      ],
+      "parameters": {
+        "url": "YOUR_DISCORD_WEBHOOK_URL",
+        "method": "POST",
+        "responseFormat": "json",
+        "jsonParameters": true,
+        "bodyParametersJson": {
+          "content": "\ud83d\udd14 Signal for {{ $json.symbols }}\nPrice: {{ $json.currentPrice }}\nPrev High: {{ $json.prevDayHigh }}\nPrev Low: {{ $json.prevDayLow }}\nSMA20: {{ $json.sma20 }}\nRSI: {{ $json.rsi }}\nSentiment: {{ $json.sentimentScore }}"
+        }
+      }
+    },
+    {
+      "id": "12",
+      "name": "Send Pushover",
+      "type": "n8n-nodes-base.pushover",
+      "typeVersion": 1,
+      "position": [
+        1400,
+        350
+      ],
+      "parameters": {
+        "userKey": "YOUR_PUSHOVER_USER_KEY",
+        "token": "YOUR_PUSHOVER_APP_TOKEN",
+        "message": "Signal: {{ $json.symbols }} \u2192 {{ $json.signal }} ({{ $json.confidence }}) at {{ $json.timestamp }}"
+      }
+    },
+    {
+      "id": "13",
+      "name": "Log to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 1,
+      "position": [
+        1600,
+        250
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "append",
+        "sheetId": "YOUR_GOOGLE_SHEET_ID",
+        "range": "Sheet1!A:J",
+        "valueInputMode": "USER_ENTERED",
+        "dataToSend": "autoMapInputData"
+      }
+    }
+  ],
+  "connections": {
+    "1": {
+      "main": [
+        [
+          {
+            "node": "2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2": {
+      "main": [
+        [
+          {
+            "node": "3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3": {
+      "main": [
+        [
+          {
+            "node": "4",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "5",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "6",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "7",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "4": {
+      "main": [
+        [
+          {
+            "node": "9",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "5": {
+      "main": [
+        [
+          {
+            "node": "9",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "6": {
+      "main": [
+        [
+          {
+            "node": "9",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "7": {
+      "main": [
+        [
+          {
+            "node": "8",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "8": {
+      "main": [
+        [
+          {
+            "node": "9",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "9": {
+      "main": [
+        [
+          {
+            "node": "10",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "11",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "12",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "13",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
