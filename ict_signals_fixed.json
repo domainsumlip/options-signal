@@ -203,9 +203,12 @@ if showBoxes and newTrade
     tp = targetP
     il = isLong
 
-    tpBox  := box.new(bar_index, il ? tp : e,  bar_index, il ? e  : tp,  bgcolor=color.new(color.lime, 85), border_color=color.new(color.lime, 20), border_width=1)
-    slBox  := box.new(bar_index, il ? e  : sl, bar_index, il ? sl : e,   bgcolor=color.new(color.red,  85), border_color=color.new(color.red,  20), border_width=1)
-    midBox := box.new(bar_index, il ? tp : sl, bar_index, il ? sl : tp,  bgcolor=na, border_color=color.new(color.white, 25), border_width=2)
+    tpBgCol = il ? color.new(color.lime,   85) : color.new(color.aqua,   85)
+    tpBdCol = il ? color.new(color.lime,   20) : color.new(color.aqua,   20)
+    midBdCol = il ? color.new(color.white, 25) : color.new(color.orange, 25)
+    tpBox  := box.new(bar_index, il ? tp : e,  bar_index, il ? e  : tp,  bgcolor=tpBgCol, border_color=tpBdCol, border_width=1)
+    slBox  := box.new(bar_index, il ? e  : sl, bar_index, il ? sl : e,   bgcolor=color.new(color.red, 85), border_color=color.new(color.red, 20), border_width=1)
+    midBox := box.new(bar_index, il ? tp : sl, bar_index, il ? sl : tp,  bgcolor=na, border_color=midBdCol, border_width=2)
 
     if showLabel
         sc   = il ? longScore  : shortScore
@@ -227,12 +230,26 @@ if showBoxes and inTrade and not na(tpBox)
     box.set_right(midBox, bar_index)
 
 if showBoxes and endTrade
-    if not na(tpBox),  box.delete(tpBox)
-    if not na(slBox),  box.delete(slBox)
-    if not na(midBox), box.delete(midBox)
+    if not na(tpBox)  => box.delete(tpBox)
+    if not na(slBox)  => box.delete(slBox)
+    if not na(midBox) => box.delete(midBox)
     tpBox  := na
     slBox  := na
     midBox := na
+
+// ══════════════════════════════════════════════════════════════════════════
+//  LIVE TRADE LINES  (horizontal dashes for entry / TP / SL)
+// ══════════════════════════════════════════════════════════════════════════
+tpLineCol = inTrade and isLong ? color.new(color.lime, 10) : color.new(color.aqua, 10)
+plot(inTrade ? entryP  : na, "Entry Line",  color.new(color.white, 30), 1, plot.style_linebr)
+plot(inTrade ? targetP : na, "TP Line",     tpLineCol,                  1, plot.style_linebr)
+plot(inTrade ? stopP   : na, "SL Line",     color.new(color.red,   10), 1, plot.style_linebr)
+
+// Bar tinting: green during long trades, red during shorts; lighter on signal bars
+barcolor(inTrade and isLong     ? color.new(color.green, 80) :
+         inTrade and not isLong ? color.new(color.red,   80) :
+         goLong                 ? color.new(color.green, 60) :
+         goShort                ? color.new(color.red,   60) : na)
 
 // ══════════════════════════════════════════════════════════════════════════
 //  SIGNAL ARROWS
