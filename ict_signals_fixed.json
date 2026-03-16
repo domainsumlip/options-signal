@@ -193,10 +193,14 @@ newTrade = inTrade and not inTrade[1]
 endTrade = not inTrade and inTrade[1]
 
 if showBoxes and newTrade
-    if not na(tpBox)  => box.delete(tpBox)
-    if not na(slBox)  => box.delete(slBox)
-    if not na(midBox) => box.delete(midBox)
-    if not na(sigLbl) => label.delete(sigLbl)
+    if not na(tpBox)
+        box.delete(tpBox)
+    if not na(slBox)
+        box.delete(slBox)
+    if not na(midBox)
+        box.delete(midBox)
+    if not na(sigLbl)
+        label.delete(sigLbl)
 
     e  = entryP
     sl = stopP
@@ -230,9 +234,12 @@ if showBoxes and inTrade and not na(tpBox)
     box.set_right(midBox, bar_index)
 
 if showBoxes and endTrade
-    if not na(tpBox)  => box.delete(tpBox)
-    if not na(slBox)  => box.delete(slBox)
-    if not na(midBox) => box.delete(midBox)
+    if not na(tpBox)
+        box.delete(tpBox)
+    if not na(slBox)
+        box.delete(slBox)
+    if not na(midBox)
+        box.delete(midBox)
     tpBox  := na
     slBox  := na
     midBox := na
