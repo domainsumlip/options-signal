@@ -1,372 +1,388 @@
-{
-  "name": "ICT-Inspired Options Signals (Full)",
-  "nodes": [
-    {
-      "id": "1",
-      "name": "Cron Trigger",
-      "type": "n8n-nodes-base.cron",
-      "typeVersion": 1,
-      "position": [
-        200,
-        200
-      ],
-      "parameters": {
-        "triggerTimes": [
-          {
-            "mode": "everyDay",
-            "hour": 7,
-            "minute": 30
-          }
-        ],
-        "timeZone": "America/Los_Angeles"
-      }
-    },
-    {
-      "id": "2",
-      "name": "Set Symbols",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 1,
-      "position": [
-        400,
-        200
-      ],
-      "parameters": {
-        "values": {
-          "json": [
-            {
-              "name": "symbols",
-              "value": [
-                "AAPL",
-                "TSLA",
-                "SPY",
-                "NFLX",
-                "QQQ",
-                "META"
-              ]
-            }
-          ]
-        }
-      }
-    },
-    {
-      "id": "3",
-      "name": "Split Symbols",
-      "type": "n8n-nodes-base.splitInBatches",
-      "typeVersion": 1,
-      "position": [
-        600,
-        200
-      ],
-      "parameters": {
-        "fieldToSplit": "symbols",
-        "batchSize": 1
-      }
-    },
-    {
-      "id": "4",
-      "name": "Get Prices",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 1,
-      "position": [
-        800,
-        100
-      ],
-      "parameters": {
-        "url": "https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol={{ $json[\"symbols\"] }}&apikey=YOUR_ALPHA_VANTAGE_API_KEY",
-        "responseFormat": "json"
-      }
-    },
-    {
-      "id": "5",
-      "name": "Get SMA",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 1,
-      "position": [
-        800,
-        200
-      ],
-      "parameters": {
-        "url": "https://www.alphavantage.co/query?function=SMA&symbol={{ $json[\"symbols\"] }}&interval=daily&time_period=20&series_type=close&apikey=YOUR_ALPHA_VANTAGE_API_KEY",
-        "responseFormat": "json"
-      }
-    },
-    {
-      "id": "6",
-      "name": "Get RSI",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 1,
-      "position": [
-        800,
-        300
-      ],
-      "parameters": {
-        "url": "https://www.alphavantage.co/query?function=RSI&symbol={{ $json[\"symbols\"] }}&interval=daily&time_period=14&series_type=close&apikey=YOUR_ALPHA_VANTAGE_API_KEY",
-        "responseFormat": "json"
-      }
-    },
-    {
-      "id": "7",
-      "name": "Get News",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 1,
-      "position": [
-        800,
-        400
-      ],
-      "parameters": {
-        "url": "https://newsapi.org/v2/everything?q={{ $json[\"symbols\"] }}&sortBy=publishedAt&language=en&apiKey=YOUR_NEWSAPI_API_KEY",
-        "responseFormat": "json"
-      }
-    },
-    {
-      "id": "8",
-      "name": "Sentiment Analysis",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 1,
-      "position": [
-        1000,
-        400
-      ],
-      "parameters": {
-        "url": "https://api-inference.huggingface.co/models/distilbert-base-uncased-finetuned-sst-2-english",
-        "method": "POST",
-        "responseFormat": "json",
-        "headers": {
-          "Authorization": "Bearer YOUR_HUGGINGFACE_API_KEY",
-          "Content-Type": "application/json"
-        },
-        "bodyParameters": [
-          {
-            "name": "inputs",
-            "value": "{{$json[\"articles\"].map(item => item.title).join(' ')}}"
-          }
-        ]
-      }
-    },
-    {
-      "id": "9",
-      "name": "Analyze ICT Logic",
-      "type": "n8n-nodes-base.function",
-      "typeVersion": 1,
-      "position": [
-        1200,
-        250
-      ],
-      "parameters": {
-        "functionCode": "const symbol = $json['symbols'];\nconst priceData = $items('Get Prices')[0].json['Time Series (Daily)'];\nconst dates = Object.keys(priceData);\nconst today = priceData[dates[0]];\nconst prevDayHigh = parseFloat(today['2. high']);\nconst prevDayLow = parseFloat(today['3. low']);\nconst currentPrice = parseFloat(today['4. close']);\nconst smaData = $items('Get SMA')[0].json['Technical Analysis: SMA'];\nconst sma20 = parseFloat(smaData[Object.keys(smaData)[0]]['SMA']);\nconst rsiData = $items('Get RSI')[0].json['Technical Analysis: RSI'];\nconst rsi = parseFloat(rsiData[Object.keys(rsiData)[0]]['RSI']);\nconst senti = $items('Sentiment Analysis')[0].json[0];\nlet sentimentScore = senti.label === 'POSITIVE' ? senti.score : -senti.score;\nconst sweptHigh = currentPrice > prevDayHigh;\nconst sweptLow = currentPrice < prevDayLow;\nconst uptrend = currentPrice > sma20 && rsi < 70;\nconst downtrend = currentPrice < sma20 && rsi > 30;\nconst bullOK = sentimentScore > 0.2;\nconst bearOK = sentimentScore < -0.2;\nlet signal = 'No signal'; let confidence = 0; let edge = false;\nif (sweptLow && uptrend && bullOK) { signal = 'Call'; edge = true; } \nelse if (sweptHigh && downtrend && bearOK) { signal = 'Put'; edge = true; }\nif (edge) confidence = 0.5 + Math.min(Math.abs(sentimentScore), 0.5);\nreturn [{ timestamp: new Date().toISOString(), symbol, currentPrice, prevDayHigh, prevDayLow, sma20, rsi, sentimentScore, signal, confidence }];"
-      }
-    },
-    {
-      "id": "10",
-      "name": "Send Telegram",
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1,
-      "position": [
-        1400,
-        150
-      ],
-      "parameters": {
-        "chatId": "YOUR_TELEGRAM_CHAT_ID",
-        "text": "\ud83d\udcc8 *Signal for {{ $json.symbols }}*\nPrice: {{ $json.currentPrice }}\nPrev High: {{ $json.prevDayHigh }}\nPrev Low: {{ $json.prevDayLow }}\nSMA20: {{ $json.sma20 }}\nRSI: {{ $json.rsi }}\nSentiment: {{ $json.sentimentScore }}\n*Signal*: {{ $json.signal }} (Confidence: {{ $json.confidence }})",
-        "options": {
-          "parse_mode": "Markdown"
-        }
-      }
-    },
-    {
-      "id": "11",
-      "name": "Send Discord",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 1,
-      "position": [
-        1400,
-        250
-      ],
-      "parameters": {
-        "url": "YOUR_DISCORD_WEBHOOK_URL",
-        "method": "POST",
-        "responseFormat": "json",
-        "jsonParameters": true,
-        "bodyParametersJson": {
-          "content": "\ud83d\udd14 Signal for {{ $json.symbols }}\nPrice: {{ $json.currentPrice }}\nPrev High: {{ $json.prevDayHigh }}\nPrev Low: {{ $json.prevDayLow }}\nSMA20: {{ $json.sma20 }}\nRSI: {{ $json.rsi }}\nSentiment: {{ $json.sentimentScore }}"
-        }
-      }
-    },
-    {
-      "id": "12",
-      "name": "Send Pushover",
-      "type": "n8n-nodes-base.pushover",
-      "typeVersion": 1,
-      "position": [
-        1400,
-        350
-      ],
-      "parameters": {
-        "userKey": "YOUR_PUSHOVER_USER_KEY",
-        "token": "YOUR_PUSHOVER_APP_TOKEN",
-        "message": "Signal: {{ $json.symbols }} \u2192 {{ $json.signal }} ({{ $json.confidence }}) at {{ $json.timestamp }}"
-      }
-    },
-    {
-      "id": "13",
-      "name": "Log to Google Sheets",
-      "type": "n8n-nodes-base.googleSheets",
-      "typeVersion": 1,
-      "position": [
-        1600,
-        250
-      ],
-      "parameters": {
-        "authentication": "oAuth2",
-        "operation": "append",
-        "sheetId": "YOUR_GOOGLE_SHEET_ID",
-        "range": "Sheet1!A:J",
-        "valueInputMode": "USER_ENTERED",
-        "dataToSend": "autoMapInputData"
-      }
-    }
-  ],
-  "connections": {
-    "1": {
-      "main": [
-        [
-          {
-            "node": "2",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "2": {
-      "main": [
-        [
-          {
-            "node": "3",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "3": {
-      "main": [
-        [
-          {
-            "node": "4",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "5",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "6",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "7",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "4": {
-      "main": [
-        [
-          {
-            "node": "9",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "5": {
-      "main": [
-        [
-          {
-            "node": "9",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "6": {
-      "main": [
-        [
-          {
-            "node": "9",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "7": {
-      "main": [
-        [
-          {
-            "node": "8",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "8": {
-      "main": [
-        [
-          {
-            "node": "9",
-            "type": "main",
-            "index": 1
-          }
-        ]
-      ]
-    },
-    "9": {
-      "main": [
-        [
-          {
-            "node": "10",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "11",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "12",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "13",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    }
-  }
-}
+//@version=6
+indicator("High Prob Signals — Sub 4% DD", overlay=true, max_labels_count=500, max_boxes_count=200)
+
+// ══════════════════════════════════════════════════════════════════════════
+//  INPUTS
+// ══════════════════════════════════════════════════════════════════════════
+g1 = "Trend Settings"
+emaFastLen = input.int(20,   "Fast EMA",            group=g1, minval=1)
+emaSlowLen = input.int(50,   "Slow EMA",            group=g1, minval=2)
+atrLen     = input.int(14,   "ATR Length",          group=g1, minval=1)
+
+g2 = "Risk Settings"
+slMult  = input.float(0.85, "Stop Loss ATR mult",    group=g2, minval=0.1, step=0.05)
+tpMult  = input.float(2.80, "Take Profit ATR mult",  group=g2, minval=0.1, step=0.05)
+riskPct = input.float(0.75, "Sim risk % per trade",  group=g2, minval=0.1, step=0.05)
+
+g3 = "Filter Settings"
+adxLen        = input.int(14,   "ADX Length",               group=g3, minval=5)
+adxMin        = input.float(25, "Min ADX strength",         group=g3, minval=15, step=1)
+rsiLen        = input.int(14,   "RSI Length",               group=g3, minval=2)
+minScore      = input.int(5,    "Min score to trade (4-6)", group=g3, minval=4, maxval=6)
+cooldown      = input.int(5,    "Cooldown bars after exit", group=g3, minval=0, maxval=30)
+maxConsecLoss = input.int(2,    "Pause after N losses",     group=g3, minval=1, maxval=5)
+
+g4 = "Display"
+showEMAs  = input.bool(true, "Show EMAs",          group=g4)
+showBoxes = input.bool(true, "Show SL/TP boxes",   group=g4)
+showDash  = input.bool(true, "Show dashboard",     group=g4)
+showLabel = input.bool(true, "Show signal labels", group=g4)
+
+// ══════════════════════════════════════════════════════════════════════════
+//  CORE INDICATORS
+// ══════════════════════════════════════════════════════════════════════════
+emaFast  = ta.ema(close, emaFastLen)
+emaSlow  = ta.ema(close, emaSlowLen)
+ema200   = ta.ema(close, 200)
+atr      = ta.atr(atrLen)
+rsi      = ta.rsi(close, rsiLen)
+volSma   = ta.sma(volume, 20)
+
+// Manual ADX
+tr   = ta.tr
+dmP  = high - high[1] > low[1] - low ? math.max(high - high[1], 0.0) : 0.0
+dmM  = low[1] - low > high - high[1] ? math.max(low[1] - low,   0.0) : 0.0
+trS  = ta.rma(tr,  adxLen)
+dmPS = ta.rma(dmP, adxLen)
+dmMS = ta.rma(dmM, adxLen)
+diP  = dmPS / math.max(trS, syminfo.mintick) * 100
+diM  = dmMS / math.max(trS, syminfo.mintick) * 100
+dx   = math.abs(diP - diM) / math.max(diP + diM, syminfo.mintick) * 100
+adx  = ta.rma(dx, adxLen)
+
+// MACD
+macdLine = ta.ema(close, 12) - ta.ema(close, 26)
+macdSig  = ta.ema(macdLine, 9)
+macdHist = macdLine - macdSig
+
+// Bollinger Bands
+bbBasis = ta.sma(close, 20)
+bbDev   = ta.stdev(close, 20)
+bbUpper = bbBasis + bbDev * 2
+bbLower = bbBasis - bbDev * 2
+
+// ATR stress guard
+atrSma = ta.sma(atr, 50)
+atrOK  = atr < atrSma * 1.6
+
+// EMA slope
+emaSlope = (emaFast - emaFast[3]) / math.max(atr, syminfo.mintick)
+
+// ══════════════════════════════════════════════════════════════════════════
+//  SIGNAL SCORING
+// ══════════════════════════════════════════════════════════════════════════
+adxStrong = adx > adxMin
+volOK     = volume > volSma * 0.9
+
+c1L = emaFast > emaSlow and close > ema200
+c2L = rsi > 52 and rsi < 72
+c3L = macdHist > 0 and macdHist > macdHist[1]
+c4L = close > bbBasis and close < bbUpper * 0.99
+c5L = emaSlope > 0.05
+c6L = adxStrong and volOK
+
+c1S = emaFast < emaSlow and close < ema200
+c2S = rsi < 48 and rsi > 28
+c3S = macdHist < 0 and macdHist < macdHist[1]
+c4S = close < bbBasis and close > bbLower * 1.01
+c5S = emaSlope < -0.05
+c6S = adxStrong and volOK
+
+longScore  = (c1L ? 1 : 0) + (c2L ? 1 : 0) + (c3L ? 1 : 0) + (c4L ? 1 : 0) + (c5L ? 1 : 0) + (c6L ? 1 : 0)
+shortScore = (c1S ? 1 : 0) + (c2S ? 1 : 0) + (c3S ? 1 : 0) + (c4S ? 1 : 0) + (c5S ? 1 : 0) + (c6S ? 1 : 0)
+
+longProb  = math.round(longScore  / 6.0 * 100)
+shortProb = math.round(shortScore / 6.0 * 100)
+
+scoreLabel(s) =>
+    s >= 5 ? "ELITE" : s >= 4 ? "HIGH" : s >= 3 ? "MOD" : "WEAK"
+
+scoreCol(s) =>
+    s >= 5 ? color.new(#39d353, 0) : s >= 4 ? color.new(#e3b341, 0) : s >= 3 ? color.new(#f0883e, 0) : color.new(#f85149, 0)
+
+// ══════════════════════════════════════════════════════════════════════════
+//  TRADE SIMULATION
+// ══════════════════════════════════════════════════════════════════════════
+var int   lastExit   = na
+var bool  inTrade    = false
+var bool  isLong     = false
+var float entryP     = na
+var float stopP      = na
+var float targetP    = na
+var int   entryBar   = na
+var float simEq      = 100.0
+var float peakEq     = 100.0
+var float maxDD      = 0.0
+var float liveDD     = 0.0
+var int   wins       = 0
+var int   losses     = 0
+var int   totalTrd   = 0
+var float totalR     = 0.0
+var float lastR      = 0.0
+var int   consecLoss = 0
+var int   maxCLoss   = 0
+
+coolOK    = na(lastExit) or bar_index - lastExit > cooldown
+pauseOK   = consecLoss < maxConsecLoss
+ddGuard   = liveDD < 3.5
+confirmed = barstate.isconfirmed and coolOK and pauseOK and ddGuard and atrOK
+
+goLong  = confirmed and not inTrade and longScore  >= minScore and longScore  > shortScore
+goShort = confirmed and not inTrade and shortScore >= minScore and shortScore > longScore
+
+if goLong and not inTrade
+    inTrade  := true
+    isLong   := true
+    entryP   := close
+    stopP    := close - atr * slMult
+    targetP  := close + atr * tpMult
+    entryBar := bar_index
+
+if goShort and not inTrade
+    inTrade  := true
+    isLong   := false
+    entryP   := close
+    stopP    := close + atr * slMult
+    targetP  := close - atr * tpMult
+    entryBar := bar_index
+
+if inTrade and bar_index > entryBar
+    hitTP = isLong ? high >= targetP : low  <= targetP
+    hitSL = isLong ? low  <= stopP   : high >= stopP
+
+    if hitTP or hitSL
+        rMult    = hitTP and not hitSL ? tpMult / slMult : -1.0
+        simEq    := simEq * (1.0 + rMult * riskPct / 100.0)
+        peakEq   := math.max(peakEq, simEq)
+        liveDD   := (peakEq - simEq) / peakEq * 100.0
+        maxDD    := math.max(maxDD, liveDD)
+        totalR   += rMult
+        lastR    := rMult
+        totalTrd += 1
+        lastExit := bar_index
+        inTrade  := false
+
+        if rMult > 0
+            wins       += 1
+            consecLoss := 0
+        else
+            losses     += 1
+            consecLoss += 1
+            maxCLoss   := math.max(maxCLoss, consecLoss)
+
+        entryP  := na
+        stopP   := na
+        targetP := na
+
+// ══════════════════════════════════════════════════════════════════════════
+//  EMA PLOTS
+// ══════════════════════════════════════════════════════════════════════════
+plot(showEMAs ? emaFast : na, "Fast EMA", color.new(color.lime,   0), 1)
+plot(showEMAs ? emaSlow : na, "Slow EMA", color.new(color.red,    0), 1)
+plot(showEMAs ? ema200  : na, "EMA 200",  color.new(color.orange, 0), 1)
+
+// ══════════════════════════════════════════════════════════════════════════
+//  SL / TP BOXES + LABELS
+// ══════════════════════════════════════════════════════════════════════════
+var box   tpBox  = na
+var box   slBox  = na
+var box   midBox = na
+var label sigLbl = na
+
+newTrade = inTrade and not inTrade[1]
+endTrade = not inTrade and inTrade[1]
+
+if showBoxes and newTrade
+    if not na(tpBox),  box.delete(tpBox)
+    if not na(slBox),  box.delete(slBox)
+    if not na(midBox), box.delete(midBox)
+    if not na(sigLbl), label.delete(sigLbl)
+
+    e  = entryP
+    sl = stopP
+    tp = targetP
+    il = isLong
+
+    tpBox  := box.new(bar_index, il ? tp : e,  bar_index, il ? e  : tp,  bgcolor=color.new(color.lime, 85), border_color=color.new(color.lime, 20), border_width=1)
+    slBox  := box.new(bar_index, il ? e  : sl, bar_index, il ? sl : e,   bgcolor=color.new(color.red,  85), border_color=color.new(color.red,  20), border_width=1)
+    midBox := box.new(bar_index, il ? tp : sl, bar_index, il ? sl : tp,  bgcolor=na, border_color=color.new(color.white, 25), border_width=2)
+
+    if showLabel
+        sc   = il ? longScore  : shortScore
+        prob = il ? longProb   : shortProb
+        dir  = il ? "LONG" : "SHORT"
+        ln1  = dir + "  " + scoreLabel(sc) + "  " + str.tostring(prob) + "% prob"
+        ln2  = "Entry  " + str.tostring(e,  format.mintick)
+        ln3  = "TP     " + str.tostring(tp, format.mintick)
+        ln4  = "SL     " + str.tostring(sl, format.mintick)
+        ln5  = "Score  " + str.tostring(sc) + "/6  ADX " + str.tostring(adx, "#.0")
+        txt  = ln1 + "\n" + ln2 + "\n" + ln3 + "\n" + ln4 + "\n" + ln5
+        lsty = il ? label.style_label_up : label.style_label_down
+        lcol = color.new(il ? color.green : color.red, sc >= 5 ? 0 : 25)
+        sigLbl := label.new(bar_index, e, txt, textcolor=color.white, style=lsty, color=lcol, size=size.normal)
+
+if showBoxes and inTrade and not na(tpBox)
+    box.set_right(tpBox,  bar_index)
+    box.set_right(slBox,  bar_index)
+    box.set_right(midBox, bar_index)
+
+if showBoxes and endTrade
+    if not na(tpBox),  box.delete(tpBox)
+    if not na(slBox),  box.delete(slBox)
+    if not na(midBox), box.delete(midBox)
+    tpBox  := na
+    slBox  := na
+    midBox := na
+
+// ══════════════════════════════════════════════════════════════════════════
+//  SIGNAL ARROWS
+// ══════════════════════════════════════════════════════════════════════════
+plotshape(goLong,  "Long",  shape.triangleup,   location.belowbar, color.new(#39d353, 0), size=size.normal)
+plotshape(goShort, "Short", shape.triangledown, location.abovebar, color.new(#f85149, 0), size=size.normal)
+
+// ══════════════════════════════════════════════════════════════════════════
+//  PROBABILITY HISTOGRAM  (separate pane)
+// ══════════════════════════════════════════════════════════════════════════
+probVal = longScore >= shortScore ? longProb : shortProb
+probCol = longScore > shortScore ? color.new(#39d353, 40) : longScore < shortScore ? color.new(#f85149, 40) : color.new(#8b949e, 60)
+plot(probVal, "Probability %", probCol, 2, plot.style_histogram, display=display.pane)
+hline(50, "50%", color.new(color.gray, 50), hline.style_dashed)
+hline(75, "75%", color.new(#39d353,    40), hline.style_dashed)
+hline(83, "83%", color.new(#e3b341,    40), hline.style_dashed)
+
+// ══════════════════════════════════════════════════════════════════════════
+//  DASHBOARD
+// ══════════════════════════════════════════════════════════════════════════
+CB0 = color.new(#0d1117,  5)
+CB1 = color.new(#161b22,  5)
+CB2 = color.new(#1c2128,  5)
+CSP = color.new(#21262d,  0)
+CTX = color.new(#e6edf3,  0)
+CDM = color.new(#8b949e,  0)
+CGN = color.new(#39d353,  0)
+CRD = color.new(#f85149,  0)
+CYL = color.new(#e3b341,  0)
+CGY = color.new(#6e7681,  0)
+
+var table db = table.new(position.bottom_right, 2, 26,
+     bgcolor=CB0, border_color=color.new(color.gray, 65),
+     border_width=1, frame_color=color.new(color.gray, 50), frame_width=1)
+
+if showDash and barstate.islast
+
+    table.cell(db, 0, 0, "  High Prob  <4% DD",             bgcolor=CB0, text_color=CTX, text_size=size.normal, text_halign=text.align_left)
+    table.cell(db, 1, 0, syminfo.ticker + " " + timeframe.period, bgcolor=CB0, text_color=CDM, text_size=size.small,  text_halign=text.align_right)
+
+    table.cell(db, 0, 1, "  — Live Filters",  bgcolor=CSP, text_color=CGY, text_size=size.tiny, text_halign=text.align_left)
+    table.cell(db, 1, 1, "",                  bgcolor=CSP, text_color=CGY, text_size=size.tiny, text_halign=text.align_right)
+
+    trendTxt = emaFast > emaSlow and close > ema200 ? "Bull + above 200" : emaFast < emaSlow and close < ema200 ? "Bear + below 200" : "Mixed"
+    trendCol = emaFast > emaSlow and close > ema200 ? CGN : emaFast < emaSlow and close < ema200 ? CRD : CYL
+    table.cell(db, 0, 2, "  Trend",  bgcolor=CB1, text_color=CDM, text_size=size.small, text_halign=text.align_left)
+    table.cell(db, 1, 2, trendTxt,  bgcolor=CB1, text_color=trendCol, text_size=size.small, text_halign=text.align_right)
+
+    adxTxt = str.tostring(adx, "#.0") + (adxStrong ? "  OK" : "  weak")
+    table.cell(db, 0, 3, "  ADX",  bgcolor=CB2, text_color=CDM, text_size=size.small, text_halign=text.align_left)
+    table.cell(db, 1, 3, adxTxt,  bgcolor=CB2, text_color=adxStrong ? CGN : CRD, text_size=size.small, text_halign=text.align_right)
+
+    rsiTxt = str.tostring(rsi, "#.0") + (rsi > 70 ? "  OB" : rsi < 30 ? "  OS" : "  OK")
+    rsiCol = rsi > 70 ? CRD : rsi < 30 ? CRD : CGN
+    table.cell(db, 0, 4, "  RSI",  bgcolor=CB1, text_color=CDM, text_size=size.small, text_halign=text.align_left)
+    table.cell(db, 1, 4, rsiTxt,  bgcolor=CB1, text_color=rsiCol, text_size=size.small, text_halign=text.align_right)
+
+    macdTxt = macdHist > 0 and macdHist > macdHist[1] ? "Rising bull" : macdHist < 0 and macdHist < macdHist[1] ? "Falling bear" : "Flat"
+    macdCol = macdHist > 0 ? CGN : CRD
+    table.cell(db, 0, 5, "  MACD",  bgcolor=CB2, text_color=CDM, text_size=size.small, text_halign=text.align_left)
+    table.cell(db, 1, 5, macdTxt,  bgcolor=CB2, text_color=macdCol, text_size=size.small, text_halign=text.align_right)
+
+    volTxt = volume > volSma ? "Above avg" : "Below avg"
+    table.cell(db, 0, 6, "  Volume",  bgcolor=CB1, text_color=CDM, text_size=size.small, text_halign=text.align_left)
+    table.cell(db, 1, 6, volTxt,     bgcolor=CB1, text_color=volume > volSma ? CGN : CDM, text_size=size.small, text_halign=text.align_right)
+
+    atrTxt = atrOK ? "Normal" : "High — blocked"
+    table.cell(db, 0, 7, "  ATR Guard",  bgcolor=CB2, text_color=CDM, text_size=size.small, text_halign=text.align_left)
+    table.cell(db, 1, 7, atrTxt,        bgcolor=CB2, text_color=atrOK ? CGN : CRD, text_size=size.small, text_halign=text.align_right)
+
+    pauseTxt = pauseOK ? "Trading OK" : "Paused " + str.tostring(consecLoss) + " losses"
+    table.cell(db, 0, 8, "  Loss Guard",  bgcolor=CB1, text_color=CDM, text_size=size.small, text_halign=text.align_left)
+    table.cell(db, 1, 8, pauseTxt,        bgcolor=CB1, text_color=pauseOK ? CGN : CRD, text_size=size.small, text_halign=text.align_right)
+
+    ddGTxt = ddGuard ? "DD OK" : "DD limit hit"
+    table.cell(db, 0, 9, "  DD Guard",  bgcolor=CB2, text_color=CDM, text_size=size.small, text_halign=text.align_left)
+    table.cell(db, 1, 9, ddGTxt,        bgcolor=CB2, text_color=ddGuard ? CGN : CRD, text_size=size.small, text_halign=text.align_right)
+
+    table.cell(db, 0, 10, "  — Signal Score",          bgcolor=CSP, text_color=CGY, text_size=size.tiny, text_halign=text.align_left)
+    table.cell(db, 1, 10, "need " + str.tostring(minScore) + "/6", bgcolor=CSP, text_color=CGY, text_size=size.tiny, text_halign=text.align_right)
+
+    table.cell(db, 0, 11, "  Long  Score",  bgcolor=CB1, text_color=CDM, text_size=size.small, text_halign=text.align_left)
+    table.cell(db, 1, 11, str.tostring(longScore) + "/6  " + scoreLabel(longScore), bgcolor=CB1, text_color=scoreCol(longScore), text_size=size.small, text_halign=text.align_right)
+
+    table.cell(db, 0, 12, "  Short Score",  bgcolor=CB2, text_color=CDM, text_size=size.small, text_halign=text.align_left)
+    table.cell(db, 1, 12, str.tostring(shortScore) + "/6  " + scoreLabel(shortScore), bgcolor=CB2, text_color=scoreCol(shortScore), text_size=size.small, text_halign=text.align_right)
+
+    dirTxt = longScore > shortScore ? "LONG  " + str.tostring(longProb) + "%" : longScore < shortScore ? "SHORT  " + str.tostring(shortProb) + "%" : "NEUTRAL"
+    dirCol = longScore > shortScore ? CGN : longScore < shortScore ? CRD : CDM
+    table.cell(db, 0, 13, "  Best Direction",  bgcolor=CB1, text_color=CDM, text_size=size.small, text_halign=text.align_left)
+    table.cell(db, 1, 13, dirTxt,              bgcolor=CB1, text_color=dirCol, text_size=size.small, text_halign=text.align_right)
+
+    statusTxt = inTrade ? "IN TRADE" : goLong or goShort ? "SIGNAL NOW" : "WAITING"
+    statusCol = inTrade ? CYL : goLong or goShort ? CGN : CGY
+    table.cell(db, 0, 14, "  — Active Trade",  bgcolor=CSP, text_color=CGY, text_size=size.tiny, text_halign=text.align_left)
+    table.cell(db, 1, 14, statusTxt,           bgcolor=CSP, text_color=statusCol, text_size=size.tiny, text_halign=text.align_right)
+
+    posTxt = inTrade ? (isLong ? "LONG" : "SHORT") : "Flat"
+    posCol = inTrade ? (isLong ? CGN : CRD) : CDM
+    table.cell(db, 0, 15, "  Direction",  bgcolor=CB2, text_color=CDM, text_size=size.small, text_halign=text.align_left)
+    table.cell(db, 1, 15, posTxt,         bgcolor=CB2, text_color=posCol, text_size=size.small, text_halign=text.align_right)
+
+    eTxt = inTrade ? str.tostring(entryP, format.mintick) : goLong or goShort ? str.tostring(close, format.mintick) + " NOW" : "—"
+    table.cell(db, 0, 16, "  Entry",  bgcolor=CB1, text_color=CDM, text_size=size.small, text_halign=text.align_left)
+    table.cell(db, 1, 16, eTxt,       bgcolor=CB1, text_color=CTX, text_size=size.small, text_halign=text.align_right)
+
+    tpNow = inTrade ? targetP : goLong ? close + atr * tpMult : goShort ? close - atr * tpMult : na
+    tpTxt = na(tpNow) ? "—" : str.tostring(tpNow, format.mintick)
+    table.cell(db, 0, 17, "  Take Profit",  bgcolor=CB2, text_color=CDM, text_size=size.small, text_halign=text.align_left)
+    table.cell(db, 1, 17, tpTxt,            bgcolor=CB2, text_color=CGN, text_size=size.small, text_halign=text.align_right)
+
+    slNow = inTrade ? stopP : goLong ? close - atr * slMult : goShort ? close + atr * slMult : na
+    slTxt = na(slNow) ? "—" : str.tostring(slNow, format.mintick)
+    table.cell(db, 0, 18, "  Stop Loss",  bgcolor=CB1, text_color=CDM, text_size=size.small, text_halign=text.align_left)
+    table.cell(db, 1, 18, slTxt,          bgcolor=CB1, text_color=CRD, text_size=size.small, text_halign=text.align_right)
+
+    rrTxt = "1 : " + str.tostring(tpMult / slMult, "#.##")
+    table.cell(db, 0, 19, "  Risk Reward",  bgcolor=CB2, text_color=CDM, text_size=size.small, text_halign=text.align_left)
+    table.cell(db, 1, 19, rrTxt,            bgcolor=CB2, text_color=CTX, text_size=size.small, text_halign=text.align_right)
+
+    table.cell(db, 0, 20, "  — Performance",               bgcolor=CSP, text_color=CGY, text_size=size.tiny, text_halign=text.align_left)
+    table.cell(db, 1, 20, str.tostring(riskPct, "#.##") + "% risk", bgcolor=CSP, text_color=CGY, text_size=size.tiny, text_halign=text.align_right)
+
+    table.cell(db, 0, 21, "  Trades  W / L",  bgcolor=CB1, text_color=CDM, text_size=size.small, text_halign=text.align_left)
+    table.cell(db, 1, 21, str.tostring(totalTrd) + "  " + str.tostring(wins) + "W / " + str.tostring(losses) + "L", bgcolor=CB1, text_color=CTX, text_size=size.small, text_halign=text.align_right)
+
+    winRate = totalTrd > 0 ? math.round(wins * 100.0 / totalTrd) : 0
+    wrCol   = winRate >= 55 ? CGN : winRate >= 45 ? CYL : CRD
+    table.cell(db, 0, 22, "  Win Rate",  bgcolor=CB2, text_color=CDM, text_size=size.small, text_halign=text.align_left)
+    table.cell(db, 1, 22, str.tostring(winRate) + "%", bgcolor=CB2, text_color=wrCol, text_size=size.small, text_halign=text.align_right)
+
+    ddIcon = maxDD < 4.0 ? "TARGET MET" : maxDD < 6.0 ? "OVER" : "HIGH"
+    ddCol  = maxDD < 4.0 ? CGN : maxDD < 6.0 ? CYL : CRD
+    ddTxt  = str.tostring(maxDD, "#.##") + "%  " + ddIcon
+    table.cell(db, 0, 23, "  Max Drawdown",  bgcolor=CB1, text_color=CDM, text_size=size.small, text_halign=text.align_left)
+    table.cell(db, 1, 23, ddTxt,             bgcolor=CB1, text_color=ddCol, text_size=size.small, text_halign=text.align_right)
+
+    lvCol = liveDD < 2.0 ? CGN : liveDD < 3.5 ? CYL : CRD
+    lvTxt = str.tostring(liveDD, "#.##") + "% live"
+    table.cell(db, 0, 24, "  Live DD from Peak",  bgcolor=CB2, text_color=CDM, text_size=size.small, text_halign=text.align_left)
+    table.cell(db, 1, 24, lvTxt,                  bgcolor=CB2, text_color=lvCol, text_size=size.small, text_halign=text.align_right)
+
+    pnl   = simEq - 100.0
+    pnlSg = pnl >= 0 ? "+" : ""
+    eqTxt = str.tostring(simEq, "#.##") + "  " + pnlSg + str.tostring(pnl, "#.##")
+    table.cell(db, 0, 25, "  Sim Equity",  bgcolor=CB1, text_color=CDM, text_size=size.small, text_halign=text.align_left)
+    table.cell(db, 1, 25, eqTxt,           bgcolor=CB1, text_color=pnl >= 0 ? CGN : CRD, text_size=size.small, text_halign=text.align_right)
+
+// ══════════════════════════════════════════════════════════════════════════
+//  ALERTS
+// ══════════════════════════════════════════════════════════════════════════
+alertcondition(goLong,  title="Long Signal",  message="High Probability LONG signal fired.")
+alertcondition(goShort, title="Short Signal", message="High Probability SHORT signal fired.")
